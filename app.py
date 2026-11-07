@@ -8,12 +8,12 @@ app = Flask(__name__)
 stt = GnaniSTTClient(api_key=KEY)
 
 def speak(text):
-    """Timbre v2.5 voice alert. Returns (base64 audio, mime) or None if it fails."""
+    """Timbre voice alert. Returns (base64 audio, mime) or None if it fails."""
     try:
         r = requests.post(
             "https://api.vachana.ai/api/v1/tts/inference",
             headers={"X-API-Key-ID": KEY, "Content-Type": "application/json"},
-            json={"text": text, "voice": "Nalini", "model": "timbre-v2.5",
+             json={"text": text, "voice": "Nalini", "model": "timbre-v2.5",
                   "language": "hi-IN", "speed": 1.0,
                   "audio_config": {"sample_rate": 24000, "num_channels": 1,
                                    "sample_width": 2, "encoding": "linear_pcm",
@@ -22,6 +22,8 @@ def speak(text):
         if r.ok:
             return base64.b64encode(r.content).decode(), r.headers.get("Content-Type", "audio/wav")
         print("TTS error", r.status_code, r.text[:300])
+        if r.ok:
+            return base64.b64encode(r.content).decode(), r.headers.get("Content-Type", "audio/wav")
     except Exception as e:
         print("TTS failed:", e)
     return None
@@ -40,11 +42,9 @@ def analyze_call():
     out = analyze(res["transcript"])
     out["transcript"] = res["transcript"]
     out["message"] = MESSAGES.get(out["label"])
-    out["voice"] = False
     if out["message"]:
         a = speak(out["message"])
-        if a:
-            out["audio"], out["mime"], out["voice"] = a[0], a[1], True
+        if a: out["audio"], out["mime"] = a
     return jsonify(out)
 
 @app.get("/")
@@ -54,77 +54,101 @@ def index():
 PAGE = """<!doctype html><html lang="en"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Scam Shield</title>
 <style>
-:root{--navy:#0d2238;--ink:#13212f;--mute:#5a6978;--line:#cfd8e1;--bg:#e8eef4;--bad:#b3202a;--warn:#9a5a00;--ok:#14586b;--mark:#ffd23f}
+:root{--black:#050505;--ink:#121212;--mute:#6b6b6b;--line:#e4e1dc;--paper:#faf8f5;--org:#ff6a1a;--yel:#ffb02e;--red:#e8392b;--bad:#c4221b;--warn:#b86200;--calm:#17624f}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 "Segoe UI","Noto Sans Devanagari",system-ui,sans-serif}
-header{background:var(--navy);color:#fff;padding:44px 20px 96px}
-.wrap{max-width:660px;margin:0 auto}
-h1{font-size:2.5rem;line-height:1.05;margin:0 0 10px;letter-spacing:-.02em}
-header p{margin:0;color:#b8c7d6;max-width:46ch}
-main{margin:-64px auto 40px;padding:0 20px}
-.card{background:#fff;border-radius:12px;padding:22px;box-shadow:0 10px 30px rgba(13,34,56,.15)}
-label.drop{display:block;border:2px dashed var(--line);border-radius:10px;padding:30px 16px;text-align:center;cursor:pointer;color:var(--mute)}
-label.drop.over,label.drop:focus-within{border-color:var(--ok);color:var(--ink)}
-label.drop b{display:block;color:var(--ink);font-size:1.1rem}
+body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.55 "Segoe UI","Noto Sans Devanagari",system-ui,sans-serif}
+.wrap{max-width:1040px;margin:0 auto;padding:0 22px}
+nav{background:var(--black);color:#fff;position:relative;z-index:3}
+nav .wrap{display:flex;align-items:center;justify-content:space-between;height:64px}
+.logo{font-weight:700;font-size:1.15rem;letter-spacing:-.01em}
+.logo i{display:inline-block;width:12px;height:12px;border-radius:50%;margin-right:9px;background:radial-gradient(circle at 35% 30%,var(--yel),var(--org) 55%,var(--red))}
+.links{display:flex;gap:26px;align-items:center;font-size:.92rem;color:#c9c9c9}
+.pill{background:#fff;color:var(--black);border-radius:99px;padding:8px 18px;font-weight:600;text-decoration:none;font-size:.9rem}
+.hero{background:var(--black);color:#fff;position:relative;overflow:hidden;padding:72px 0 150px}
+.sphere{position:absolute;right:-90px;top:-70px;width:460px;height:460px;border-radius:50%;
+ background:radial-gradient(circle at 38% 34%,#ffd25a 0%,var(--org) 38%,var(--red) 66%,#3a0d05 100%);
+ box-shadow:0 0 120px 30px rgba(255,106,26,.35);opacity:.95}
+.hero .wrap{position:relative}
+.hero h1{font-size:clamp(2.4rem,6vw,4.2rem);line-height:1.02;letter-spacing:-.03em;margin:0 0 18px;max-width:13ch;font-weight:600}
+.hero h1 em{font-family:Georgia,"Times New Roman",serif;font-weight:400}
+.hero p{margin:0;color:#bdbdbd;max-width:48ch;font-size:1.1rem}
+main{margin-top:-96px;position:relative;z-index:2}
+.tool{max-width:680px;margin:0 auto 0 0}
+.card{background:#fff;border:1px solid var(--line);border-radius:18px;padding:24px;box-shadow:0 24px 60px rgba(0,0,0,.18)}
+.drop{display:block;border:1.5px dashed #c9c4bb;border-radius:12px;padding:30px 16px;text-align:center;cursor:pointer;color:var(--mute)}
+.drop b{display:block;color:var(--ink);font-size:1.1rem;margin-bottom:2px}
+.drop.over,.drop:focus-within{border-color:var(--org);background:#fff7f0}
 input[type=file]{position:absolute;opacity:0;width:1px;height:1px}
-button{margin-top:14px;width:100%;background:var(--navy);color:#fff;border:0;padding:14px;border-radius:8px;font:inherit;font-weight:600;cursor:pointer}
-button:disabled{opacity:.55;cursor:wait}button:focus-visible{outline:3px solid var(--ok);outline-offset:2px}
-#res{display:none;margin-top:18px;border-radius:12px;overflow:hidden;box-shadow:0 10px 30px rgba(13,34,56,.15);background:#fff}
-#top{padding:22px;color:#fff;background:var(--ok)}
+button{margin-top:14px;width:100%;background:var(--black);color:#fff;border:0;border-radius:99px;padding:14px;font:inherit;font-weight:600;cursor:pointer}
+button:disabled{opacity:.5;cursor:wait}
+button:focus-visible{outline:3px solid var(--org);outline-offset:2px}
+#res{display:none;margin-top:18px;border-radius:18px;overflow:hidden;background:#fff;border:1px solid var(--line);box-shadow:0 24px 60px rgba(0,0,0,.12)}
+#top{padding:22px 24px;color:#fff;background:var(--calm)}
 #res.scam #top{background:var(--bad)}#res.suspicious #top{background:var(--warn)}
-#verdict{font-size:1.6rem;font-weight:800;line-height:1.15;margin:0}
-#sub{margin:6px 0 0;opacity:.92}
-.body{padding:20px 22px 22px}
-.sigs{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px}
-.sig{border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-size:.93rem;color:var(--mute)}
-.sig.on{border-color:var(--ink);color:var(--ink);font-weight:600;background:#f6f8fa}
-.sig i{font-style:normal;margin-right:6px}
-.amt{margin:0 0 12px;color:var(--mute)}.amt b{color:var(--ink)}
-.tr{font-size:1.05rem;line-height:1.8;padding:14px;background:#f6f8fa;border-radius:8px}
-mark{background:var(--mark);color:#000;padding:1px 3px;border-radius:3px}
+#verdict{margin:0;font-size:1.5rem;font-weight:700;line-height:1.2}
+.body{padding:20px 24px}
+ul{list-style:none;padding:0;margin:0 0 14px;display:grid;grid-template-columns:1fr 1fr;gap:6px 16px}
+li{padding:2px 0}li.on{font-weight:600}li.off{color:var(--mute)}
+#amt{font-weight:600;margin-bottom:12px}
+blockquote{margin:0;padding:14px;background:var(--paper);border-radius:10px;color:#3d3d3d;line-height:1.8}
+mark{background:var(--yel);color:#000;padding:1px 3px;border-radius:3px}
 audio{width:100%;margin-top:14px}
-.note{font-size:.84rem;color:var(--mute);margin-top:20px}
-@media(max-width:480px){h1{font-size:2rem}.sigs{grid-template-columns:1fr}}
+.note{font-size:.85rem;color:var(--mute);margin:18px 2px 0}
+.built{padding:56px 0 8px}
+.built h2{font-size:1.6rem;letter-spacing:-.02em;margin:0 0 6px;font-weight:600}
+.built p{color:var(--mute);margin:0 0 20px;max-width:56ch}
+.models{display:flex;gap:12px;flex-wrap:wrap}
+.m{border:1px solid var(--line);border-radius:12px;padding:12px 16px;background:#fff}
+.m small{display:block;color:var(--mute)}
+footer{background:var(--black);color:#9a9a9a;margin-top:56px;padding:28px 0;font-size:.9rem}
+footer b{color:#fff}
+@media(max-width:620px){.sphere{width:280px;height:280px;right:-110px}ul{grid-template-columns:1fr}.links span{display:none}}
 </style>
-<header><div class="wrap"><h1>Is this call a scam?</h1>
-<p>Upload a call recording and find out in seconds. Hindi and Hinglish. Nothing is saved.</p></div></header>
-<main><div class="wrap">
-<div class="card">
+<nav><div class="wrap"><div class="logo"><i></i>Scam Shield</div>
+<div class="links"><span>Speech to text</span><span>Voice alert</span><a class="pill" href="#check">Check a call</a></div></div></nav>
+<header class="hero"><div class="sphere"></div><div class="wrap">
+<h1>Catch the <em>scam</em> before the money moves.</h1>
+<p>Upload a call recording. Scam Shield listens in Hindi and Hinglish, spots fake officials threatening arrest, and warns you out loud.</p></div></header>
+<main id="check"><div class="wrap"><div class="tool"><div class="card">
 <label class="drop" id="dz"><input type="file" id="f" accept="audio/*"><b id="fn">Choose a recording</b>or drop it here (up to 30 seconds)</label>
 <button id="go">Check call</button></div>
-<div id="res" aria-live="polite"><div id="top"><p id="verdict"></p><p id="sub"></p></div>
-<div class="body"><div class="sigs" id="sig"></div><p class="amt" id="amt"></p>
-<div class="tr" id="tr"></div><audio id="au" controls hidden></audio></div></div>
-<p class="note">Prototype tested on simulated calls. It looks for one known scam pattern (fake officials threatening arrest), so a calm result is never a guarantee. If in doubt, hang up and call 1930.</p>
+<div id="res" aria-live="polite"><div id="top"><p id="verdict"></p></div>
+<div class="body"><ul id="sig"></ul><div id="amt"></div><blockquote id="tr"></blockquote>
+<audio id="au" controls style="display:none"></audio></div></div>
+<p class="note">Nothing is saved. Prototype tested on simulated calls. It looks for one known scam pattern (fake officials threatening arrest), so a clear result is never a guarantee. If in doubt, hang up and call 1930.</p>
+</div>
+<section class="built"><h2>Built on Gnani voice models</h2>
+<p>The recording is transcribed, checked for the signs of a scam call, and the warning is spoken back in Hindi.</p>
+<div class="models"><div class="m"><small>Speech to text</small>Prisma</div><div class="m"><small>Voice alert</small>Timbre</div></div></section>
 </div></main>
+<footer><div class="wrap"><b>Scam Shield</b> &middot; Built on Gnani AI &middot; #GnaniAI #GreatIndianAIInternshipChallenge</div></footer>
 <script>
 const $=id=>document.getElementById(id), dz=$('dz'), f=$('f');
-const V={scam:['Scam pattern detected','Hang up now, then call 1930.'],suspicious:['Suspicious call','Some scam signals found. Do not send money.'],none:['No known scam pattern detected','Stay careful. This check only knows one scam type.']};
-f.onchange=()=>{if(f.files[0])$('fn').textContent=f.files[0].name};
-['dragover','dragenter'].forEach(e=>dz.addEventListener(e,x=>{x.preventDefault();dz.classList.add('over')}));
-['dragleave','drop'].forEach(e=>dz.addEventListener(e,()=>dz.classList.remove('over')));
-dz.addEventListener('drop',x=>{x.preventDefault();if(x.dataTransfer.files[0]){f.files=x.dataTransfer.files;f.onchange()}});
+const V={scam:'Scam pattern detected. Hang up.',suspicious:'Suspicious. Be careful.',none:'No known scam pattern detected. Stay careful.'};
+f.onchange=()=>{$('fn').textContent=f.files[0]?f.files[0].name:'Choose a recording'};
+['dragenter','dragover'].forEach(e=>dz.addEventListener(e,ev=>{ev.preventDefault();dz.classList.add('over')}));
+['dragleave','drop'].forEach(e=>dz.addEventListener(e,ev=>{ev.preventDefault();dz.classList.remove('over')}));
+dz.addEventListener('drop',ev=>{if(ev.dataTransfer.files.length){f.files=ev.dataTransfer.files;f.onchange()}});
 $('go').onclick=async()=>{
   const file=f.files[0]; if(!file){alert('Choose an audio file first.');return}
-  const b=$('go');b.disabled=true;b.textContent='Listening to the call...';
+  $('go').disabled=true;$('go').textContent='Checking...';
   const fd=new FormData();fd.append('audio',file);
   try{
-    const r=await fetch('/analyze',{method:'POST',body:fd}),d=await r.json();
+    const r=await fetch('/analyze',{method:'POST',body:fd});const d=await r.json();
     if(!r.ok)throw new Error(d.error||'Something went wrong');
     $('res').style.display='block';$('res').className=d.label;
-    $('verdict').textContent=V[d.label][0];$('sub').textContent=V[d.label][1];
+    $('verdict').textContent=V[d.label]||V.none;
     $('sig').innerHTML='';
-    for(const [k,v] of Object.entries(d.signals)){const e=document.createElement('div');e.className='sig'+(v?' on':'');
-      const i=document.createElement('i');i.textContent=v?'\\u2713':'\\u2013';e.append(i,k);$('sig').appendChild(e)}
-    $('amt').textContent='';const ab=document.createElement('b');ab.textContent=d.amount;$('amt').append('Amount mentioned: ',ab);
+    for(const [k,v] of Object.entries(d.signals)){const li=document.createElement('li');li.className=v?'on':'off';li.textContent=(v?'Heard: ':'Not heard: ')+k;$('sig').appendChild(li)}
+    $('amt').textContent='Amount mentioned: '+d.amount;
     const tr=$('tr');tr.textContent='';let p=0;
     for(const [a,z,n] of d.spans){tr.append(d.transcript.slice(p,a));const m=document.createElement('mark');m.title=n;m.textContent=d.transcript.slice(a,z);tr.append(m);p=z}
     tr.append(d.transcript.slice(p));
     const au=$('au');
-    if(d.audio){au.src='data:'+d.mime+';base64,'+d.audio;au.hidden=false;au.play().catch(()=>{})}else au.hidden=true;
-    $('res').scrollIntoView({behavior:'smooth'});
+    if(d.audio){au.src='data:'+d.mime+';base64,'+d.audio;au.style.display='block';au.play().catch(()=>{})}else au.style.display='none';
+    $('res').scrollIntoView({behavior:'smooth',block:'nearest'});
   }catch(e){alert(e.message)}
-  b.disabled=false;b.textContent='Check call';
+  $('go').disabled=false;$('go').textContent='Check call';
 };
 </script></html>"""
 
