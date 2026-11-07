@@ -1,0 +1,3 @@
+flask
+gnani-vachana
+requests
