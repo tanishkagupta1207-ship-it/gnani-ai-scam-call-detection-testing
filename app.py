@@ -9,7 +9,6 @@ KEY = os.environ.get("GNANI_API_KEY")  # set this in your terminal, never in cod
 app = Flask(__name__)
 stt = GnaniSTTClient(api_key=KEY)
 
-
 def speak(text):
     """Timbre voice alert. Returns (base64 audio, mime) or None if it fails."""
     try:
@@ -28,7 +27,6 @@ def speak(text):
     except Exception as e:
         print("TTS failed:", e)
     return None
-
 
 def transcribe_long(path):
     """Cut audio into 25-second parts, transcribe each, join the text."""
@@ -71,6 +69,33 @@ def analyze_call():
         if a: out["audio"], out["mime"] = a
     return jsonify(out)
 
+RANK = {"none": 0, "suspicious": 1, "scam": 2}
+
+@app.post("/live")
+def live_chunk():
+    """One short mic chunk. Client sends the transcript so far; we append, re-analyze the whole call."""
+    f = request.files["audio"]
+    prev = request.form.get("prev", "").strip()
+    alerted = request.form.get("alerted", "none")
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
+    tmp.close(); f.save(tmp.name)
+    try:
+        res = stt.transcribe(tmp.name, language_code="hi-IN")
+    finally:
+        os.remove(tmp.name)  # nothing is stored
+    if not res.get("success"):
+        return jsonify(error="Transcription failed"), 502
+    text = (prev + " " + (res.get("transcript") or "")).strip()
+    if not text:
+        return jsonify(empty=True, transcript="")
+    out = analyze(text)
+    out["transcript"] = text
+    out["message"] = MESSAGES.get(out["label"])
+    # speak only when the alert level goes up, not on every chunk
+    if out["message"] and RANK.get(out["label"], 0) > RANK.get(alerted, 0):
+        a = speak(out["message"])
+        if a: out["audio"], out["mime"] = a
+    return jsonify(out)
 
 @app.get("/")
 def index():
@@ -105,6 +130,9 @@ main{margin-top:-96px;position:relative;z-index:2}
 .drop.over,.drop:focus-within{border-color:var(--org);background:#fff7f0}
 input[type=file]{position:absolute;opacity:0;width:1px;height:1px}
 button{margin-top:14px;width:100%;background:var(--black);color:#fff;border:0;border-radius:99px;padding:14px;font:inherit;font-weight:600;cursor:pointer}
+button.alt{background:#fff;color:var(--ink);border:1.5px solid var(--ink)}
+button.rec{background:var(--bad);border-color:var(--bad);color:#fff}
+#ls{display:none;margin-top:10px;font-size:.9rem;color:var(--mute);text-align:center}
 button:disabled{opacity:.5;cursor:wait}
 button:focus-visible{outline:3px solid var(--org);outline-offset:2px}
 #res{display:none;margin-top:18px;border-radius:18px;overflow:hidden;background:#fff;border:1px solid var(--line);box-shadow:0 24px 60px rgba(0,0,0,.12)}
@@ -133,10 +161,11 @@ footer b{color:#fff}
 <div class="links"><span>Speech to text</span><span>Voice alert</span><a class="pill" href="#check">Check a call</a></div></div></nav>
 <header class="hero"><div class="sphere"></div><div class="wrap">
 <h1>Catch the <em>scam</em> before the money moves.</h1>
-<p>Upload a call recording. Scam Shield listens in Hindi and Hinglish, spots fake officials threatening arrest, and warns you out loud.</p></div></header>
+<p>Upload a recording or listen live. Scam Shield listens in Hindi and Hinglish, spots fake officials threatening arrest, and warns you out loud.</p></div></header>
 <main id="check"><div class="wrap"><div class="tool"><div class="card">
 <label class="drop" id="dz"><input type="file" id="f" accept="audio/*"><b id="fn">Choose a recording</b>or drop it here (up to 60 seconds)</label>
-<button id="go">Check call</button></div>
+<button id="go">Check call</button>
+<button id="live" class="alt">Start live detection (mic)</button><div id="ls" aria-live="polite"></div></div>
 <div id="res" aria-live="polite"><div id="top"><p id="verdict"></p></div>
 <div class="body"><ul id="sig"></ul><div id="amt"></div><blockquote id="tr"></blockquote>
 <audio id="au" controls style="display:none"></audio></div></div>
@@ -150,10 +179,27 @@ footer b{color:#fff}
 <script>
 const $=id=>document.getElementById(id), dz=$('dz'), f=$('f');
 const V={scam:'Scam pattern detected. Hang up.',suspicious:'Suspicious. Be careful.',none:'No known scam pattern detected. Stay careful.'};
+const RANK={none:0,suspicious:1,scam:2};
 f.onchange=()=>{$('fn').textContent=f.files[0]?f.files[0].name:'Choose a recording'};
 ['dragenter','dragover'].forEach(e=>dz.addEventListener(e,ev=>{ev.preventDefault();dz.classList.add('over')}));
 ['dragleave','drop'].forEach(e=>dz.addEventListener(e,ev=>{ev.preventDefault();dz.classList.remove('over')}));
 dz.addEventListener('drop',ev=>{if(ev.dataTransfer.files.length){f.files=ev.dataTransfer.files;f.onchange()}});
+
+function render(d,isLive){
+  $('res').style.display='block';$('res').className=d.label;
+  $('verdict').textContent=V[d.label]||V.none;
+  $('sig').innerHTML='';
+  for(const [k,v] of Object.entries(d.signals)){const li=document.createElement('li');li.className=v?'on':'off';li.textContent=(v?'Heard: ':'Not heard: ')+k;$('sig').appendChild(li)}
+  $('amt').textContent='Amount mentioned: '+d.amount;
+  const tr=$('tr');tr.textContent='';let p=0;
+  for(const [a,z,n] of d.spans){tr.append(d.transcript.slice(p,a));const m=document.createElement('mark');m.title=n;m.textContent=d.transcript.slice(a,z);tr.append(m);p=z}
+  tr.append(d.transcript.slice(p));
+  const au=$('au');
+  if(d.audio){au.src='data:'+d.mime+';base64,'+d.audio;au.style.display='block';au.play().catch(()=>{})}
+  else if(!isLive)au.style.display='none';
+  if(!isLive)$('res').scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+
 $('go').onclick=async()=>{
   const file=f.files[0]; if(!file){alert('Choose an audio file first.');return}
   $('go').disabled=true;$('go').textContent='Checking...';
@@ -161,20 +207,86 @@ $('go').onclick=async()=>{
   try{
     const r=await fetch('/analyze',{method:'POST',body:fd});const t=await r.text();let d;try{d=JSON.parse(t);}catch(e){throw new Error('Server error '+r.status+'. Check the terminal.');}
     if(!r.ok)throw new Error(d.error||'Something went wrong');
-    $('res').style.display='block';$('res').className=d.label;
-    $('verdict').textContent=V[d.label]||V.none;
-    $('sig').innerHTML='';
-    for(const [k,v] of Object.entries(d.signals)){const li=document.createElement('li');li.className=v?'on':'off';li.textContent=(v?'Heard: ':'Not heard: ')+k;$('sig').appendChild(li)}
-    $('amt').textContent='Amount mentioned: '+d.amount;
-    const tr=$('tr');tr.textContent='';let p=0;
-    for(const [a,z,n] of d.spans){tr.append(d.transcript.slice(p,a));const m=document.createElement('mark');m.title=n;m.textContent=d.transcript.slice(a,z);tr.append(m);p=z}
-    tr.append(d.transcript.slice(p));
-    const au=$('au');
-    if(d.audio){au.src='data:'+d.mime+';base64,'+d.audio;au.style.display='block';au.play().catch(()=>{})}else au.style.display='none';
-    $('res').scrollIntoView({behavior:'smooth',block:'nearest'});
+    render(d,false);
   }catch(e){alert(e.message)}
   $('go').disabled=false;$('go').textContent='Check call';
 };
+
+/* ---------- live mic ---------- */
+const SEG_SECONDS=6, MAX_SECONDS=90;
+let L=null;
+
+function toWav(samples,inRate){            // mono float32 -> 16 kHz 16-bit WAV
+  const outRate=16000, ratio=inRate/outRate, n=Math.floor(samples.length/ratio);
+  const buf=new ArrayBuffer(44+n*2), v=new DataView(buf);
+  const w=(o,s)=>{for(let i=0;i<s.length;i++)v.setUint8(o+i,s.charCodeAt(i))};
+  w(0,'RIFF');v.setUint32(4,36+n*2,true);w(8,'WAVE');w(12,'fmt ');v.setUint32(16,16,true);
+  v.setUint16(20,1,true);v.setUint16(22,1,true);v.setUint32(24,outRate,true);v.setUint32(28,outRate*2,true);
+  v.setUint16(32,2,true);v.setUint16(34,16,true);w(36,'data');v.setUint32(40,n*2,true);
+  for(let i=0;i<n;i++){
+    const a=Math.floor(i*ratio), b=Math.max(a+1,Math.min(Math.floor((i+1)*ratio),samples.length));
+    let sum=0;for(let j=a;j<b;j++)sum+=samples[j];
+    const x=Math.max(-1,Math.min(1,sum/(b-a)));
+    v.setInt16(44+i*2,x<0?x*0x8000:x*0x7fff,true);
+  }
+  return new Blob([buf],{type:'audio/wav'});
+}
+
+function flush(S,final){
+  if(!S.len)return;
+  if(final&&S.len<S.ctx.sampleRate*1){S.chunks=[];S.len=0;return}   // ignore <1s leftovers
+  const all=new Float32Array(S.len);let o=0;for(const c of S.chunks){all.set(c,o);o+=c.length}
+  S.chunks=[];S.len=0;
+  const blob=toWav(all,S.ctx.sampleRate);
+  S.chain=S.chain.then(async()=>{                 // strictly one request at a time, in order
+    const fd=new FormData();fd.append('audio',blob,'chunk.wav');
+    fd.append('prev',S.transcript);fd.append('alerted',S.alerted);
+    try{
+      const r=await fetch('/live',{method:'POST',body:fd});const t=await r.text();let d;try{d=JSON.parse(t);}catch(e){throw new Error('Server error '+r.status);}
+      if(!r.ok)throw new Error(d.error||'chunk failed');
+      if(d.empty)return;
+      S.transcript=d.transcript;
+      if((RANK[d.label]||0)>(RANK[S.alerted]||0))S.alerted=d.label;
+      render(d,true);
+    }catch(e){S.err='A chunk was skipped ('+e.message+')'}
+  });
+}
+
+async function startLive(){
+  let stream;
+  try{stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:true}})}
+  catch(e){alert('Microphone blocked or unavailable. Allow mic access (needs localhost or https).');return}
+  const ctx=new (window.AudioContext||window.webkitAudioContext)();
+  const src=ctx.createMediaStreamSource(stream), proc=ctx.createScriptProcessor(4096,1,1);
+  const S={stream,ctx,src,proc,chunks:[],len:0,transcript:'',alerted:'none',chain:Promise.resolve(),t0:Date.now(),err:''};
+  L=S;
+  proc.onaudioprocess=e=>{
+    const d=new Float32Array(e.inputBuffer.getChannelData(0));S.chunks.push(d);S.len+=d.length;
+    if(S.len>=SEG_SECONDS*ctx.sampleRate)flush(S,false);
+  };
+  src.connect(proc);proc.connect(ctx.destination);
+  S.timer=setInterval(()=>{
+    const s=Math.floor((Date.now()-S.t0)/1000);
+    $('ls').textContent='Listening... '+s+'s'+(S.err?'  |  '+S.err:'');
+    if(s>=MAX_SECONDS)stopLive();
+  },500);
+  $('ls').style.display='block';$('ls').textContent='Listening... 0s';
+  $('live').textContent='Stop live detection';$('live').classList.add('rec');
+  $('go').disabled=true;
+}
+
+function stopLive(){
+  const S=L;if(!S)return;L=null;
+  clearInterval(S.timer);
+  S.proc.disconnect();S.src.disconnect();S.stream.getTracks().forEach(t=>t.stop());
+  flush(S,true);
+  $('ls').textContent='Finishing last chunk...';
+  S.chain.then(()=>{S.ctx.close();$('ls').textContent=S.transcript?'Stopped.':'Stopped. No speech detected.'});
+  $('live').textContent='Start live detection (mic)';$('live').classList.remove('rec');
+  $('go').disabled=false;
+}
+
+$('live').onclick=()=>{L?stopLive():startLive()};
 </script></html>"""
 
 if __name__ == "__main__":
