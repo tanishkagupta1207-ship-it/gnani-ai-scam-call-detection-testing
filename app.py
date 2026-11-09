@@ -1,4 +1,6 @@
 import os, base64, tempfile, requests
+import subprocess, glob, shutil
+import imageio_ffmpeg
 from flask import Flask, request, jsonify, render_template_string
 from gnani.stt import GnaniSTTClient
 from detector import analyze, MESSAGES
@@ -7,13 +9,14 @@ KEY = os.environ.get("GNANI_API_KEY")  # set this in your terminal, never in cod
 app = Flask(__name__)
 stt = GnaniSTTClient(api_key=KEY)
 
+
 def speak(text):
     """Timbre voice alert. Returns (base64 audio, mime) or None if it fails."""
     try:
         r = requests.post(
             "https://api.vachana.ai/api/v1/tts/inference",
             headers={"X-API-Key-ID": KEY, "Content-Type": "application/json"},
-             json={"text": text, "voice": "Nalini", "model": "timbre-v2.5",
+            json={"text": text, "voice": "Nalini", "model": "timbre-v2.5",
                   "language": "hi-IN", "speed": 1.0,
                   "audio_config": {"sample_rate": 24000, "num_channels": 1,
                                    "sample_width": 2, "encoding": "linear_pcm",
@@ -22,11 +25,30 @@ def speak(text):
         if r.ok:
             return base64.b64encode(r.content).decode(), r.headers.get("Content-Type", "audio/wav")
         print("TTS error", r.status_code, r.text[:300])
-        if r.ok:
-            return base64.b64encode(r.content).decode(), r.headers.get("Content-Type", "audio/wav")
     except Exception as e:
         print("TTS failed:", e)
     return None
+
+
+def transcribe_long(path):
+    """Cut audio into 25-second parts, transcribe each, join the text."""
+    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    folder = tempfile.mkdtemp()
+    try:
+        subprocess.run(
+            [ffmpeg, "-y", "-i", path, "-f", "segment", "-segment_time", "25",
+             "-ar", "16000", "-ac", "1", os.path.join(folder, "part%03d.wav")],
+            check=True, capture_output=True)
+        texts = []
+        for p in sorted(glob.glob(os.path.join(folder, "part*.wav"))):
+            r = stt.transcribe(p, language_code="hi-IN")
+            if not r.get("success"):
+                return r
+            texts.append(r["transcript"])
+        return {"success": True, "transcript": " ".join(texts)}
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
+
 
 @app.post("/analyze")
 def analyze_call():
@@ -34,7 +56,9 @@ def analyze_call():
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(f.filename)[1] or ".wav")
     tmp.close(); f.save(tmp.name)
     try:
-        res = stt.transcribe(tmp.name, language_code="hi-IN")
+        res = transcribe_long(tmp.name)
+    except Exception as e:
+        return jsonify(error=f"Transcription failed: {e}"), 502
     finally:
         os.remove(tmp.name)  # nothing is stored
     if not res.get("success"):
@@ -46,6 +70,7 @@ def analyze_call():
         a = speak(out["message"])
         if a: out["audio"], out["mime"] = a
     return jsonify(out)
+
 
 @app.get("/")
 def index():
@@ -110,7 +135,7 @@ footer b{color:#fff}
 <h1>Catch the <em>scam</em> before the money moves.</h1>
 <p>Upload a call recording. Scam Shield listens in Hindi and Hinglish, spots fake officials threatening arrest, and warns you out loud.</p></div></header>
 <main id="check"><div class="wrap"><div class="tool"><div class="card">
-<label class="drop" id="dz"><input type="file" id="f" accept="audio/*"><b id="fn">Choose a recording</b>or drop it here (up to 30 seconds)</label>
+<label class="drop" id="dz"><input type="file" id="f" accept="audio/*"><b id="fn">Choose a recording</b>or drop it here (up to 60 seconds)</label>
 <button id="go">Check call</button></div>
 <div id="res" aria-live="polite"><div id="top"><p id="verdict"></p></div>
 <div class="body"><ul id="sig"></ul><div id="amt"></div><blockquote id="tr"></blockquote>
@@ -134,7 +159,7 @@ $('go').onclick=async()=>{
   $('go').disabled=true;$('go').textContent='Checking...';
   const fd=new FormData();fd.append('audio',file);
   try{
-    const r=await fetch('/analyze',{method:'POST',body:fd});const d=await r.json();
+    const r=await fetch('/analyze',{method:'POST',body:fd});const t=await r.text();let d;try{d=JSON.parse(t);}catch(e){throw new Error('Server error '+r.status+'. Check the terminal.');}
     if(!r.ok)throw new Error(d.error||'Something went wrong');
     $('res').style.display='block';$('res').className=d.label;
     $('verdict').textContent=V[d.label]||V.none;
