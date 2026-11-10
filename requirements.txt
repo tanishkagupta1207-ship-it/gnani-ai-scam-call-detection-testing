@@ -2,3 +2,4 @@ flask
 gnani-vachana
 requests
 imageio-ffmpeg
+gunicorn
